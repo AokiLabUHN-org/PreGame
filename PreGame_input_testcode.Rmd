@@ -18,13 +18,19 @@ Outline:
 1. Load CD8T obj, subset "NK/gdT", & prepare barcode
 2. Normalize CD8T obj 
 3. Cell Cycle Scoring (missing ABHD17A & TRDV1)
-4. Builds the expression table from the SCT assay
-5. Combines the expression with the barcodes and cell-cycle scores 
-6. session info
+4. Build the expression table from the SCT assay
+5. Combine the expression with the barcodes and cell-cycle scores 
+6. Session info
 
 
 # 1. Load CD8T obj, subset "NK/gdT", & prepare barcode
 ```{r}
+library(Seurat)        
+library(SeuratObject)  
+library(glmGamPoi)     # for SCTransform(method = "glmGamPoi")
+library(sctransform)   
+
+
 # Load cd8t obj
 load("/cluster/projects/xxx/scRNAseq_ALCL_FFPE/data/Seurat_objects/subclustering_2603/normal_CD8T_subclustering_res0.1.Rdata")
 
@@ -93,13 +99,12 @@ cd8t <- SCTransform(cd8t,
 # 3. Cell Cycle Scoring
 NOTE: missing "ABHD17A" "TRDV1"  genes
 ```{r}
-# 19 PreGame genes on Zenodo:
+# 19 PreGame genes:
 #'TYROBP', 'ASCL2', 'FCGR3A', 'FGFBP2', 'KLRC1', 'GNLY', 'CX3CR1', 'GZMB', 'PRSS23', 'ABHD17A', 'NKG7', 'PRF1', 'EMP3', 'RAP1GAP2', 'CLIC3', 'NCR3', 'FOS', 'TRDV1', 'S1PR5' 
 
 pregame_genes <- c("TYROBP","ASCL2","FCGR3A","FGFBP2","KLRC1","GNLY","CX3CR1","GZMB",
                    "PRSS23","ABHD17A","NKG7","PRF1","EMP3","RAP1GAP2","CLIC3","NCR3",
                    "FOS","TRDV1","S1PR5")
-
 
 
 # Check missing genes in cd8t:
@@ -111,9 +116,7 @@ missing_genes
 missing_genes %in% rownames(cd8t[["RNA"]])
 #[1] "ABHD17A" "TRDV1"  
 #[1] FALSE FALSE
-
 # NOTE: "ABHD17A" "TRDV1"  are not even expressed by sc.obj_harmony (my whole, initial Seurat obj) either
-
 
 
 # Perform Seurat's CellCycleScoring()
@@ -138,11 +141,11 @@ head(cc)
 table(cc$Phase)
 # G1 G2M   S 
 #437 239 308 
-
 ```
 
 
-# 4. Builds the expression table from the SCT assay
+# 4. Build the expression table from the SCT assay
+Take 17 out of 19 PreGame genes and keep only gdT cells
 ```{r}
 pregame_present <- setdiff(pregame_genes, c("ABHD17A", "TRDV1"))
 gdt <- subset(cd8t, cells = barcodes)
@@ -152,7 +155,7 @@ dim(expr)
 ```
 
 
-# 5. Combines the expression with the barcodes and cell-cycle scores 
+# 5. Combine the expression with the barcodes and cell-cycle scores 
 ```{r}
 out <- data.frame(Barcode   = barcodes,
                   S.Score   = cc[barcodes, "S.Score"],
