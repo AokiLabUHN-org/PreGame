@@ -1,4 +1,5 @@
 # Preparing a cell matrix input for PreGame RNA-only model 
+PreGame is a machine-learning algorithm capable of identifying TR γδ T cells from single-cell CITE sequencing data of tumour-infiltrating lymphocytes (TILs). Here, I document how I prepare a cell matrix for the PreGame RNA-only model with snRNA-seq data.
 
 ## Input file needed for PreGame:
 a cell matrix (each row is a barcode/cell, either a .csv or .tsv) from each dataset containing:
