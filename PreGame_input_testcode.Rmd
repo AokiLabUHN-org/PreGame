@@ -1,0 +1,348 @@
+---
+title: "PreGame_input_testcode"
+author: "Putri Ramadani"
+date: "2026-11-20"
+output: html_document
+---
+
+
+----- PreGame input file prep for RNA-only model -----
+
+Input file needed for PreGame:
+a cell matrix (each row is a barcode/cell, either a .csv or .tsv) from each dataset containing:
+- Barcode
+- "S.Score”, “G2M.Score” and “Phase” values (from Seurat’s CellCycleScoring() function) 
+- Normalized gene expression of the 19 PreGame genes 
+
+Outline:
+1. Load CD8T obj, subset "NK/gdT", & prepare barcode
+2. Normalize CD8T obj 
+3. Cell Cycle Scoring (missing ABHD17A & TRDV1)
+4. Builds the expression table from the SCT assay
+5. Combines the expression with the barcodes and cell-cycle scores 
+6. session info
+
+
+# 1. Load CD8T obj, subset "NK/gdT", & prepare barcode
+```{r}
+# Load cd8t obj
+load("/cluster/projects/xxx/scRNAseq_ALCL_FFPE/data/Seurat_objects/subclustering_2603/normal_CD8T_subclustering_res0.1.Rdata")
+
+table(cd8t@meta.data$cd8t_celltype)
+# exhausted CD8      NK / gdT TCF7+GZMA+CD8 
+#         2505           984          5334 
+
+ncol(cd8t)
+# 8823
+
+
+# subset NK/gdT
+gdT <- subset(cd8t, subset = cd8t_celltype == "NK / gdT")
+table(gdT$cd8t_celltype)
+# NK / gdT 
+#     984 
+
+barcodes <- colnames(gdT)
+
+length(barcodes) 
+#[1] 984
+
+head(barcodes)
+#[1] "ALCL001_AAAGCGAAGTTACATCACAGTCTG-1" "ALCL001_ACCAATAAGTCTACCAACAGTCTG-1"
+#[3] "ALCL001_ACCTAGTGTGCTCCTTACAGTCTG-1" "ALCL001_ACTACAAAGCAGCCAAACAGTCTG-1"
+#[5] "ALCL001_AGCGCTAAGGCCCATTACAGTCTG-1" "ALCL001_AGCGCTAAGGTCTTGCACAGTCTG-1"
+```
+
+
+# 2. Normalize CD8T obj 
+Normalize data: SCTransform
+```{r}
+# Prepare percent.mt
+cd8t[["percent.mt"]] <- PercentageFeatureSet(cd8t, pattern = "^MT-")
+summary(cd8t$percent.mt)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  0.0000  0.3605  0.7227  1.2628  1.4418 15.2914 
+
+
+# Normalize CD8T obj using scTransform and parameters as in the paper
+cd8t <- SCTransform(cd8t,
+                   method = "glmGamPoi",
+                   vst.flavor = "v2",
+                   variable.features.n = 3000,
+                   vars.to.regress = "percent.mt",
+                   return.only.var.genes = FALSE)   
+
+# output message:
+#Running SCTransform on assay: RNA
+#Running SCTransform on layer: counts
+#vst.flavor='v2' set. Using model with fixed slope and excluding poisson genes.
+#Variance stabilizing transformation of count matrix of size 13715 by 8823
+#Model formula is y ~ log_umi
+#Get Negative Binomial regression parameters per gene
+#Using 2000 genes, 5000 cells
+#There are 49 estimated thetas smaller than 1e-07 - will be set to 1e-07
+#Second step: Get residuals using fitted parameters for 13715 genes
+#Computing corrected count matrix for 13715 genes
+#Calculating gene attributes
+#Wall clock passed: Time difference of 42.48209 secs
+#Determine variable features
+#...
+```
+
+
+# 3. Cell Cycle Scoring
+NOTE: missing "ABHD17A" "TRDV1"  genes
+```{r}
+# 19 PreGame genes on Zenodo:
+#'TYROBP', 'ASCL2', 'FCGR3A', 'FGFBP2', 'KLRC1', 'GNLY', 'CX3CR1', 'GZMB', 'PRSS23', 'ABHD17A', 'NKG7', 'PRF1', 'EMP3', 'RAP1GAP2', 'CLIC3', 'NCR3', 'FOS', 'TRDV1', 'S1PR5' 
+
+pregame_genes <- c("TYROBP","ASCL2","FCGR3A","FGFBP2","KLRC1","GNLY","CX3CR1","GZMB",
+                   "PRSS23","ABHD17A","NKG7","PRF1","EMP3","RAP1GAP2","CLIC3","NCR3",
+                   "FOS","TRDV1","S1PR5")
+
+
+
+# Check missing genes in cd8t:
+SeuratObject::Assays(cd8t)
+#[1] "RNA" "SCT"
+
+missing_genes <- setdiff(pregame_genes, rownames(cd8t[["SCT"]]))
+missing_genes
+missing_genes %in% rownames(cd8t[["RNA"]])
+#[1] "ABHD17A" "TRDV1"  
+#[1] FALSE FALSE
+
+# NOTE: "ABHD17A" "TRDV1"  are not even expressed by sc.obj_harmony (my whole, initial Seurat obj) either
+
+
+
+# Perform Seurat's CellCycleScoring()
+## newest: cc.genes.updated.2019
+cd8t <- CellCycleScoring(cd8t,
+                         s.features   = cc.genes.updated.2019$s.genes,
+                         g2m.features = cc.genes.updated.2019$g2m.genes)
+
+cc <- cd8t@meta.data[barcodes, c("S.Score", "G2M.Score", "Phase")]
+#Warning: The following features are not present in the object: MRPL36, not searching for symbol synonyms
+#Warning: The following features are not present in the object: PIMREG, not searching for symbol synonyms
+
+head(cc)
+#                                        S.Score    G2M.Score Phase
+#ALCL001_AAAGCGAAGTTACATCACAGTCTG-1 -0.031614951  0.014796847   G2M
+#ALCL001_ACCAATAAGTCTACCAACAGTCTG-1 -0.005322315 -0.007494335    G1
+#ALCL001_ACCTAGTGTGCTCCTTACAGTCTG-1  0.030864788  0.019872121     S
+#ALCL001_ACTACAAAGCAGCCAAACAGTCTG-1 -0.022867522 -0.017007666    G1
+#ALCL001_AGCGCTAAGGCCCATTACAGTCTG-1 -0.015772211 -0.001820860    G1
+#ALCL001_AGCGCTAAGGTCTTGCACAGTCTG-1 -0.025609455 -0.021193931    G1
+
+table(cc$Phase)
+# G1 G2M   S 
+#437 239 308 
+
+```
+
+
+# 4. Builds the expression table from the SCT assay
+```{r}
+pregame_present <- setdiff(pregame_genes, c("ABHD17A", "TRDV1"))
+gdt <- subset(cd8t, cells = barcodes)
+expr <- t(as.matrix(GetAssayData(gdt, assay = "SCT", layer = "data")[pregame_present, , drop = FALSE]))
+dim(expr)
+#[1] 984  17
+```
+
+
+# 5. Combines the expression with the barcodes and cell-cycle scores 
+```{r}
+out <- data.frame(Barcode   = barcodes,
+                  S.Score   = cc[barcodes, "S.Score"],
+                  G2M.Score = cc[barcodes, "G2M.Score"],
+                  Phase     = cc[barcodes, "Phase"],
+                  expr[barcodes, , drop = FALSE],
+                  check.names = FALSE)
+
+dim(out)
+#[1] 984  21
+
+sum(is.na(out))
+#[1] 0
+
+write.csv(out, "/cluster/home/xxxuhn/scRNAseq_ALCL_FFPE/results/processed/261120_PreGame_input_gdT.csv", row.names = FALSE)
+```
+
+
+
+# 6. session info 
+```{r}
+R.version.string
+packageVersion("Seurat")
+packageVersion("sctransform")
+#[1] "R version 4.5.2 (2025-10-31)"
+#[1] ‘5.1.0’
+#[1] ‘0.4.1’
+
+
+sessionInfo()
+# R version 4.5.2 (2025-10-31)
+# Platform: x86_64-conda-linux-gnu
+# Running under: Rocky Linux 9.8 (Blue Onyx)
+
+Matrix products: default
+BLAS/LAPACK: /cluster/tools/software/rocky9/R/4.5.2/lib/libopenblasp-r0.3.32.so;  LAPACK version 3.12.0
+
+locale:
+ [1] LC_CTYPE=C.UTF-8       LC_NUMERIC=C           LC_TIME=C.UTF-8       
+ [4] LC_COLLATE=C.UTF-8     LC_MONETARY=C.UTF-8    LC_MESSAGES=C.UTF-8   
+ [7] LC_PAPER=C.UTF-8       LC_NAME=C              LC_ADDRESS=C          
+[10] LC_TELEPHONE=C         LC_MEASUREMENT=C.UTF-8 LC_IDENTIFICATION=C   
+
+time zone: America/Toronto
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats4    grid      stats     graphics  grDevices utils     datasets 
+[8] methods   base     
+
+other attached packages:
+ [1] future_1.67.0               slingshot_2.12.0           
+ [3] TrajectoryUtils_1.12.0      princurve_2.1.6            
+ [5] clustree_0.5.1              ggraph_2.2.2               
+ [7] CellChat_2.1.2              igraph_2.0.3               
+ [9] liana_0.1.14                EnhancedVolcano_1.22.0     
+[11] GSEABase_1.66.0             graph_1.82.0               
+[13] annotate_1.82.0             XML_3.99-0.17              
+[15] AnnotationDbi_1.66.0        msigdbr_25.1.1             
+[17] clusterProfiler_4.12.6      DESeq2_1.44.0              
+[19] harmony_1.2.3               Rcpp_1.1.1-1.1             
+[21] glmGamPoi_1.16.0            DropletUtils_1.24.0        
+[23] SingleCellExperiment_1.24.0 SummarizedExperiment_1.34.0
+[25] Biobase_2.64.0              GenomicRanges_1.56.1       
+[27] GenomeInfoDb_1.40.1         IRanges_2.38.1             
+[29] S4Vectors_0.42.1            BiocGenerics_0.50.0        
+[31] MatrixGenerics_1.16.0       matrixStats_1.4.1          
+[33] SoupX_1.6.2                 ComplexHeatmap_2.25.2      
+[35] ragg_1.4.0                  circlize_0.4.16            
+[37] UpSetR_1.4.0                RColorBrewer_1.1-3         
+[39] ggridges_0.5.6              ggrepel_0.9.6              
+[41] pheatmap_1.0.13             cowplot_1.1.3              
+[43] patchwork_1.3.0             data.table_1.16.0          
+[45] lubridate_1.9.3             forcats_1.0.0              
+[47] stringr_1.5.1               purrr_1.1.0                
+[49] readr_2.1.5                 ggplot2_3.5.2              
+[51] tidyverse_2.0.0             readxl_1.4.5               
+[53] tibble_3.2.1                tidyr_1.3.1                
+[55] dplyr_1.1.4                 Matrix_1.7-0               
+[57] Seurat_5.1.0                SeuratObject_5.0.2         
+[59] sp_2.1-4                   
+
+loaded via a namespace (and not attached):
+  [1] R.methodsS3_1.8.2         dichromat_2.0-0.1        
+  [3] progress_1.2.3            goftest_1.2-3            
+  [5] Biostrings_2.72.1         HDF5Array_1.32.1         
+  [7] vctrs_0.7.3               spatstat.random_3.3-2    
+  [9] digest_0.6.37             png_0.1-8                
+ [11] shape_1.4.6.1             registry_0.5-1           
+ [13] OmnipathR_3.13.27         deldir_2.0-4             
+ [15] parallelly_1.45.1         MASS_7.3-61              
+ [17] reshape2_1.4.4            httpuv_1.6.15            
+ [19] foreach_1.5.2             qvalue_2.36.0            
+ [21] withr_3.0.2               xfun_0.53                
+ [23] ggfun_0.2.0               ggpubr_0.6.1             
+ [25] survival_3.7-0            memoise_2.0.1            
+ [27] gson_0.1.0                systemfonts_1.2.3        
+ [29] tidytree_0.4.6            zoo_1.8-12               
+ [31] GlobalOptions_0.1.2       pbapply_1.7-4            
+ [33] R.oo_1.26.0               Formula_1.2-5            
+ [35] prettyunits_1.2.0         KEGGREST_1.44.1          
+ [37] promises_1.3.0            httr_1.4.7               
+ [39] rstatix_0.7.2             globals_0.18.0           
+ [41] fitdistrplus_1.2-1        rhdf5filters_1.16.0      
+ [43] rhdf5_2.48.0              UCSC.utils_1.0.0         
+ [45] miniUI_0.1.1.1            generics_0.1.3           
+ [47] DOSE_3.30.5               ggalluvial_0.12.5        
+ [49] dir.expiry_1.10.0         babelgene_22.9           
+ [51] curl_6.2.3                zlibbioc_1.50.0          
+ [53] ScaledMatrix_1.10.0       polyclip_1.10-7          
+ [55] GenomeInfoDbData_1.2.12   SparseArray_1.4.8        
+ [57] xtable_1.8-4              doParallel_1.0.17        
+ [59] evaluate_1.0.1            S4Arrays_1.4.1           
+ [61] hms_1.1.3                 irlba_2.3.5.1            
+ [63] colorspace_2.1-1          filelock_1.0.3           
+ [65] ggnetwork_0.5.13          ROCR_1.0-11              
+ [67] reticulate_1.39.0         spatstat.data_3.1-2      
+ [69] magrittr_2.0.3            lmtest_0.9-40            
+ [71] later_1.3.2               viridis_0.6.5            
+ [73] ggtree_3.14.0             lattice_0.22-6           
+ [75] NMF_0.28                  spatstat.geom_3.3-3      
+ [77] future.apply_1.11.2       scattermore_1.2          
+ [79] scuttle_1.12.0            shadowtext_0.1.6         
+ [81] RcppAnnoy_0.0.22          pillar_1.9.0             
+ [83] nlme_3.1-168              sna_2.8                  
+ [85] iterators_1.0.14          gridBase_0.4-7           
+ [87] compiler_4.5.2            beachmat_2.18.1          
+ [89] RSpectra_0.16-2           stringi_1.8.4            
+ [91] tensor_1.5                plyr_1.8.9               
+ [93] crayon_1.5.3              abind_1.4-8              
+ [95] gridGraphics_0.5-1        locfit_1.5-9.10          
+ [97] graphlayouts_1.2.2        bit_4.5.0                
+ [99] fastmatch_1.1-6           codetools_0.2-20         
+[101] textshaping_0.4.0         BiocSingular_1.18.0      
+[103] bslib_0.8.0               GetoptLong_1.0.5         
+[105] plotly_4.10.4             mime_0.12                
+[107] splines_4.5.2             fastDummies_1.7.4        
+[109] basilisk_1.17.2           sparseMatrixStats_1.14.0 
+[111] cellranger_1.1.0          knitr_1.48               
+[113] blob_1.2.4                utf8_1.2.4               
+[115] clue_0.3-65               fs_1.6.4                 
+[117] checkmate_2.3.2           listenv_0.9.1            
+[119] DelayedMatrixStats_1.24.0 logger_0.3.0             
+[121] ggsignif_0.6.4            ggplotify_0.1.2          
+[123] statmod_1.5.0             svglite_2.2.1            
+[125] tzdb_0.4.0                network_1.19.0           
+[127] tweenr_2.0.3              pkgconfig_2.0.3          
+[129] tools_4.5.2               cachem_1.1.0             
+[131] RSQLite_2.3.7             rvest_1.0.4              
+[133] viridisLite_0.4.2         DBI_1.2.3                
+[135] rmarkdown_2.28            fastmap_1.2.0            
+[137] scales_1.4.0              ica_1.0-3                
+[139] broom_1.0.9               sass_0.4.9               
+[141] coda_0.19-4.1             FNN_1.1.4.1              
+[143] BiocManager_1.30.26       dotCall64_1.2            
+[145] carData_3.0-5             RANN_2.6.2               
+[147] farver_2.1.2              tidygraph_1.3.1          
+[149] scatterpie_0.2.5          yaml_2.3.10              
+[151] cli_3.6.6                 leiden_0.4.3.1           
+[153] lifecycle_1.0.5           uwot_0.2.2               
+[155] bluster_1.12.0            backports_1.5.0          
+[157] BiocParallel_1.38.0       timechange_0.3.0         
+[159] gtable_0.3.6              rjson_0.2.23             
+[161] progressr_0.14.0          parallel_4.5.2           
+[163] ape_5.8-1                 limma_3.60.4             
+[165] jsonlite_1.8.9            edgeR_4.2.1              
+[167] RcppHNSW_0.6.0            bit64_4.5.2              
+[169] assertthat_0.2.1          Rtsne_0.17               
+[171] yulab.utils_0.2.1         BiocNeighbors_1.20.2     
+[173] spatstat.utils_3.1-0      zip_2.3.1                
+[175] jquerylib_0.1.4           metapod_1.10.1           
+[177] GOSemSim_2.30.2           dqrng_0.4.1              
+[179] spatstat.univar_3.0-1     R.utils_2.12.3           
+[181] lazyeval_0.2.2            shiny_1.9.1              
+[183] htmltools_0.5.8.1         enrichplot_1.24.4        
+[185] GO.db_3.19.1              sctransform_0.4.1        
+[187] rappdirs_0.3.3            basilisk.utils_1.17.3    
+[189] glue_1.8.0                spam_2.11-0              
+[191] httr2_1.1.2               XVector_0.44.0           
+[193] treeio_1.30.0             scran_1.30.2             
+[195] gridExtra_2.3             R6_2.6.1                 
+[197] ggiraph_0.9.0             rngtools_1.5.2           
+[199] cluster_2.1.6             Rhdf5lib_1.26.0          
+[201] aplot_0.2.8               statnet.common_4.12.0    
+[203] DelayedArray_0.30.1       tidyselect_1.2.1         
+[205] xml2_1.3.6                ggforce_0.5.0            
+[207] car_3.1-3                 rsvd_1.0.5               
+[209] KernSmooth_2.23-24        S7_0.2.0                 
+[211] htmlwidgets_1.6.4         fgsea_1.30.0             
+[213] rlang_1.2.0               spatstat.sparse_3.1-0    
+[215] spatstat.explore_3.3-3    uuid_1.2-1               
+[217] fansi_1.0.6    
+```
